@@ -1,0 +1,10 @@
+# specific to CodeBlocks IDE
+*.layout
+*.depend
+# generated directories
+bin/
+obj/
+build/
+# ignore visual studio files 
+.vs
+.vscode
