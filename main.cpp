@@ -1,6 +1,7 @@
 ﻿#include "raylib.h"
 #include "raymath.h"
 #include <iostream>
+#include <fstream>
 #include <cassert>
 #include "imgui.h"
 #include "rlImGui.h"
@@ -29,10 +30,20 @@ uint8_t SP = 0x00;
 // when finished with a subroutine
 uint16_t stack[16];
 
+// Delay timer register
+// Delay timer subtr 1 from the val of DT at a rate of 60Hz
+// When DT = 0, it deactivates
+uint8_t DT;
+
+// Sound timer register
+uint8_t ST;
+
 int const scr_h = 32;
 int const scr_w = 64;
 int cell_size = 8;
 bool screen[scr_h][scr_w];
+
+const float frames_per_sec = 60;
 
 uint8_t sprite_table[16][5] = {
     {	0xF0, 0x90, 0x90, 0x90, 0xF0, }, // 0
@@ -74,6 +85,118 @@ uint8_t program2[] = {
     0x00, 0xEE, // RET                                      (21C) 9
 };
 
+uint8_t keypad[16];
+
+int ch8_to_rb_key(uint8_t ch8_key) {
+    switch (ch8_key) {
+    case (0x01):
+        return KEY_ONE;
+
+    case (0x02):
+        return KEY_TWO;
+
+    case (0x03):
+        return KEY_THREE;
+
+    case (0x0C):
+        return KEY_FOUR;
+
+    case (0x04):
+        return KEY_Q;
+
+    case (0x05):
+        return KEY_W;
+
+    case (0x06):
+        return KEY_E;
+
+    case (0x0D):
+        return KEY_R;
+
+    case (0x07):
+        return KEY_A;
+
+    case (0x08):
+        return KEY_S;
+
+    case (0x09):
+        return KEY_D;
+
+    case (0x0E):
+        return KEY_F;
+
+    case (0x0A):
+        return KEY_Z;
+
+    case (0x00):
+        return KEY_X;
+
+    case (0x0B):
+        return KEY_C;
+
+    case (0x0F):
+        return KEY_V;
+
+    default:
+        break;
+    }
+}
+
+uint8_t rb_to_ch8_key(int key) {
+    switch (key) {
+    case (KEY_ONE):
+        return 0x01;
+
+    case (KEY_TWO):
+        return 0x02;
+
+    case (KEY_THREE):
+        return 0x03;
+
+    case (KEY_FOUR):
+        return 0x0C;
+
+    case (KEY_Q):
+        return 0x04;
+
+    case (KEY_W):
+        return 0x05;
+
+    case (KEY_E):
+        return 0x06;
+
+    case (KEY_R):
+        return 0x0D;
+
+    case (KEY_A):
+        return 0x07;
+
+    case (KEY_S):
+        return 0x08;
+
+    case (KEY_D):
+        return 0x09;
+
+    case (KEY_F):
+        return 0x0E;
+
+    case (KEY_Z):
+        return 0x0A;
+
+    case (KEY_X):
+        return 0x00;
+
+    case (KEY_C):
+        return 0x0B;
+
+    case (KEY_V):
+        return 0x0F;
+
+    default:
+        break;
+    }
+}
+
 void load_to_memory() {
     for (int i = 0; i < sizeof(program2); i++) {
         RAM[512 + i] = program2[i];
@@ -85,6 +208,7 @@ void load_sptites() {
     for (int y = 0; y < 16; y++) {
         for (int x = 0; x < 5; x++) {
             if ((y * 5 + x) < 0x1FF) { // 0x1FF = 511
+                // load sprites? start is RAM[0]
                 RAM[y * 5 + x] = sprite_table[y][x];
             }
         }
@@ -97,12 +221,6 @@ void init_disp() {
             screen[y][x] = 0;
         }
     }
-    for (int y = 10; y < 22; y++) {
-        for (int x = 8; x < 15; x++) {
-            screen[y][x] = 1;
-        }
-    }
-    screen[27][33] = 1;
 }
 
 void disp_clear() {
@@ -114,7 +232,11 @@ void disp_clear() {
     // memset(screen, 0, sizeof(screen));
 }
 
-void execute_instruction() {
+// fetch, decode and execute a single instruction
+void run_cycle() {
+
+    uint8_t Vx;
+
     // 4-bit value, the lowest 4 bit (Dxyn)
     uint8_t n = RAM[PC + 1] & 0x0F;
 
@@ -132,6 +254,11 @@ void execute_instruction() {
 
     // 4-bit value, the lower 4 bits of the high byte of instr, shifted right by 4
     uint8_t op_category = RAM[PC] >> 4;
+
+    uint8_t rand_val;
+
+    uint8_t sprite_row;
+    uint8_t sprite_pixel;
 
     switch (op_category) {
     case (0x00):
@@ -204,7 +331,7 @@ void execute_instruction() {
                 break;
 
             case (0x04):
-                V[x] = (V[x] + V[y]); // Only the lowest 8 bits of the result are kept, and stored in Vx
+                V[x] = (V[x] + V[y]);
                 if (V[x] > 0xFF) {
                     V[0x0F] = 1;
                 }
@@ -225,13 +352,8 @@ void execute_instruction() {
                 break;
 
             case (0x06):
-                if ((V[x] & 0x0F) == 0x01) {
-                    V[0x0F] = 1; 
-                }
-                else {
-                    V[0x0F] = 0; 
-                }
-                V[x] = V[x] >> 1;
+                V[0x0F] = V[x] & 0x01;
+                V[x] >>= 1;
                 break;
 
             case (0x07):
@@ -270,16 +392,150 @@ void execute_instruction() {
         PC = nnn + V[0];
         break;
 
-    /*case (0x0C): // ----------- this
-        // ...
+    case (0x0C):
+        rand_val = GetRandomValue(0, 255);
+        V[x] = rand_val & kk;
         break;
 
-    case (0x0D): // ----------- this
-        // ...
-        break;*/
+    case (0x0D):
+        for (int h = 0; h < n; h++) {
+            sprite_row = RAM[I + h];
+            for (int w = 0; w < 8; w++) {
+                sprite_pixel = sprite_row & (0x80 >> w);
+                if (sprite_pixel != 0) {
+                    if (screen[V[y] + h][V[x] + w] == 1) {
+                        screen[V[y] + h][V[x] + w] = 0;
+                        V[0x0F] = 1;
+                    }
+                    else {
+                        screen[V[y] + h][V[x] + w] = 1;
+                        V[0x0F] = 0;
+                    }
+                }
+            }
+        }
+        break;
 
-    // case Ex9E and ExA1
-    // case F...
+    case (0x0E):
+        switch (kk) {
+        case (0x9E):
+            Vx = V[x];
+            if (IsKeyDown(ch8_to_rb_key(Vx))) {
+                PC += 2;
+            }
+            break;
+
+        case (0xA1):
+            Vx = V[x];
+            if (!IsKeyDown(ch8_to_rb_key(Vx))) {
+                PC += 2;
+            }
+            break;
+        }
+        break;
+
+    case (0x0F):
+        switch (kk) {
+            case (0x07):
+                V[x] = DT;
+                break;
+
+            case (0x0A): // check this later
+                if (IsKeyReleased(KEY_ONE)) {
+                    V[x] = rb_to_ch8_key(KEY_ONE);
+                }
+                else if (IsKeyReleased(KEY_TWO)) {
+                    V[x] = rb_to_ch8_key(KEY_TWO);
+                }
+                else if (IsKeyReleased(KEY_THREE)) {
+                    V[x] = rb_to_ch8_key(KEY_THREE);
+                }
+                else if (IsKeyReleased(KEY_FOUR)) {
+                    V[x] = rb_to_ch8_key(KEY_FOUR);
+                }
+                else if (IsKeyReleased(KEY_Q)) {
+                    V[x] = rb_to_ch8_key(KEY_Q);
+                }
+                else if (IsKeyReleased(KEY_W)) {
+                    V[x] = rb_to_ch8_key(KEY_W);
+                }
+                else if (IsKeyReleased(KEY_E)) {
+                    V[x] = rb_to_ch8_key(KEY_E);
+                }
+                else if (IsKeyReleased(KEY_R)) {
+                    V[x] = rb_to_ch8_key(KEY_R);
+                }
+                else if (IsKeyReleased(KEY_A)) {
+                    V[x] = rb_to_ch8_key(KEY_A);
+                }
+                else if (IsKeyReleased(KEY_S)) {
+                    V[x] = rb_to_ch8_key(KEY_S);
+                }
+                else if (IsKeyReleased(KEY_D)) {
+                    V[x] = rb_to_ch8_key(KEY_D);
+                }
+                else if (IsKeyReleased(KEY_F)) {
+                    V[x] = rb_to_ch8_key(KEY_F);
+                }
+                else if (IsKeyReleased(KEY_Z)) {
+                    V[x] = rb_to_ch8_key(KEY_Z);
+                }
+                else if (IsKeyReleased(KEY_X)) {
+                    V[x] = rb_to_ch8_key(KEY_X);
+                }
+                else if (IsKeyReleased(KEY_C)) {
+                    V[x] = rb_to_ch8_key(KEY_C);
+                }
+                else if (IsKeyReleased(KEY_V)) {
+                    V[x] = rb_to_ch8_key(KEY_V);
+                }
+                else {
+                    PC -= 2;
+                }
+                break;
+
+            case (0x15):
+                DT = V[x];
+                break;
+
+            case (0x18):
+                ST = V[x];
+                break;
+
+            case (0x1E):
+                I = I + V[x];
+                break;
+
+            case (0x29):
+                I = V[x] * 5; // not sure
+                break;
+
+            case (0x33):
+                if (V[x] == 0) {
+                    RAM[I] = 0;
+                    RAM[I + 1] = 0;
+                    RAM[I + 2] = 0;
+                }
+                else {
+                    RAM[I] = V[x] / 100;
+                    RAM[I + 1] = (V[x] / 10) % 10;
+                    RAM[I + 2] = V[x] % 10;
+                }
+                break;
+
+            case (0x55):
+                for (int i = 0; i <= x; i++) {
+                    RAM[I + i] = V[i];
+                }
+                break;
+
+            case (0x65):
+                for (int i = 0; i <= x; i++) {
+                    V[i] = RAM[I + i];
+                }
+                break;
+        }
+        break;
 
     default:
         break;
@@ -295,7 +551,7 @@ Vector2 convert_to_px(Vector2 v) {
 }
 
 void render_screen() {
-    Vector2 v2cell_sz = { cell_size, cell_size };
+    Vector2 v2cell_sz = { float(cell_size), float(cell_size) };
     for (int y = 0; y < scr_h; y++) {
         for (int x = 0; x < scr_w; x++) {
             Vector2 x_y = { float(x), float(y) };
@@ -313,11 +569,31 @@ int main() {
     InitWindow(1920, 1080, "CHIP-8");
     init_disp();
     load_sptites();
-    load_to_memory();
+    
+    //open the binary file for reading
+    //FILE *program_file = fopen("glitchGhost.ch8", "rb");
+    //FILE *program_file = fopen("TETRIS", "rb");
+    FILE *program_file = fopen("6-keypad.ch8", "rb");
+
+    if (program_file) {
+        fseek(program_file, 0, SEEK_END);
+        long program_size = ftell(program_file);
+        fseek(program_file, 0, SEEK_SET);
+
+        fread(RAM + 512, program_size, 1, program_file);
+        fclose(program_file);
+    }
+    else {
+        cout << "ERROR: opeing file for reading " << endl;
+    }
+
+    // memcpy(chip8_RAM + 512, program, sizeof(program));
     PC = 0x200; // start at 512
+    double next_tick = 0.f;
 
     SetTargetFPS(60);
     rlImGuiSetup(true);
+
     while (!WindowShouldClose()) {
         BeginDrawing();
             ClearBackground(BLACK);
@@ -332,6 +608,8 @@ int main() {
                 ImGui::Text("PC: 0x%x\n", PC );
                 ImGui::Text("I: 0x%x\n", I);
                 ImGui::Text("SP: 0x%02x\n", SP);
+                ImGui::Text("DT: 0x%02x\n", DT);
+                ImGui::Text("ST: 0x%02x\n", ST);
 
                     for (int i = 0; i < sizeof(V); i++) {
                         ImGui::Text("V%x: 0x%02x\n", i , V[i]);
@@ -353,9 +631,19 @@ int main() {
             ImGui::End();
             rlImGuiEnd();
 
-            if (IsKeyPressed(KEY_SPACE)) {
-                execute_instruction();
-                PC += 2;
+            if (GetTime() >= next_tick) {
+                next_tick = GetTime() + (0.1f / 60.0f);
+                
+                for (int i = 0; i < 1; i++) {
+                    run_cycle();
+                    PC += 2;
+                }
+                if (DT > 0) {
+                    DT -= 1;
+                }
+                if (ST > 0) {
+                    ST -= 1;
+                }
             }
 
             render_screen();
