@@ -85,6 +85,16 @@ uint8_t program2[] = {
     0x00, 0xEE, // RET                                      (21C) 9
 };
 
+uint8_t program3[] = {
+    0x61, 0x20, // vx = nn, v1 = 20
+    0xF1, 0x1E, // i += Vx, i = 20
+    0xD5, 0x28, // Dxyn, D x=1 y=2, n = 8
+    0x62, 0x12, // vx = nn, v1 = 20
+    0xF2, 0x1E, // i += Vx, i = 12
+    0xD3, 0xF8,
+    0xD5, 0xA8,
+};
+
 uint8_t keypad[16];
 
 int ch8_to_rb_key(uint8_t ch8_key) {
@@ -235,7 +245,12 @@ void disp_clear() {
 // fetch, decode and execute a single instruction
 void run_cycle() {
 
-    uint8_t Vx;
+    bool was_changed = false;
+
+    uint8_t xpos;
+    uint8_t ypos;
+
+    int key;
 
     // 4-bit value, the lowest 4 bit (Dxyn)
     uint8_t n = RAM[PC + 1] & 0x0F;
@@ -267,7 +282,7 @@ void run_cycle() {
             disp_clear();
             break;
 
-        case(0x0E): // RET
+        case(0x0E): // RET // good
             SP--;
             PC = stack[SP];
             break;
@@ -304,11 +319,11 @@ void run_cycle() {
         }
         break;
 
-    case (0x06):
+    case (0x06): // good
         V[x] = kk;
         break;
 
-    case (0x07):
+    case (0x07): // good
         V[x] += kk;
         break;
 
@@ -366,17 +381,17 @@ void run_cycle() {
                 V[x] = V[y] - V[x];
                 break;
 
-            case (0x0E):
-                if ((V[x] & 0xF0) == 0x10) {
+            case (0x0E): // good 
+                if ((V[x] & 0x80) == 0x80) {
                     V[0x0F] = 1;
                 }
                 else {
                     V[0x0F] = 0;
                 }
-                V[x] = V[x] << 2;
+                V[x] = V[x] * 2;
                 break;
         }
-    break;
+        break;
 
     case (0x09):
         if (V[x] != V[y]) {
@@ -384,7 +399,7 @@ void run_cycle() {
         }
         break;
 
-    case (0x0A):
+    case (0x0A): // good
         I = nnn;
         break;
 
@@ -397,37 +412,45 @@ void run_cycle() {
         V[x] = rand_val & kk;
         break;
 
-    case (0x0D):
+    case (0x0D): // good
+        V[0x0F] = 0;
+        was_changed = false;
+            xpos = V[x] % scr_w;
+            ypos = V[y] % scr_h;
         for (int h = 0; h < n; h++) {
             sprite_row = RAM[I + h];
             for (int w = 0; w < 8; w++) {
                 sprite_pixel = sprite_row & (0x80 >> w);
                 if (sprite_pixel != 0) {
-                    if (screen[V[y] + h][V[x] + w] == 1) {
-                        screen[V[y] + h][V[x] + w] = 0;
-                        V[0x0F] = 1;
+                    if (screen[ypos + h][xpos + w] == 1) {
+                        screen[ypos + h][xpos + w] = 0;
+                        was_changed = true;
                     }
                     else {
-                        screen[V[y] + h][V[x] + w] = 1;
-                        V[0x0F] = 0;
+                        screen[ypos + h][xpos + w] = 1;
                     }
                 }
             }
+        }
+        if (was_changed) {
+            V[0x0F] = 1;
         }
         break;
 
     case (0x0E):
         switch (kk) {
         case (0x9E):
-            Vx = V[x];
-            if (IsKeyDown(ch8_to_rb_key(Vx))) {
+            key = ch8_to_rb_key(V[x]);
+            if (IsKeyDown(ch8_to_rb_key(V[x]))) {
+                key = ch8_to_rb_key(V[x]);
                 PC += 2;
             }
             break;
 
         case (0xA1):
-            Vx = V[x];
-            if (!IsKeyDown(ch8_to_rb_key(Vx))) {
+            key = ch8_to_rb_key(V[x]);
+            if (!IsKeyDown(ch8_to_rb_key(V[x]))) {
+                key = ch8_to_rb_key(V[x]);
                 PC += 2;
             }
             break;
@@ -572,8 +595,9 @@ int main() {
     
     //open the binary file for reading
     //FILE *program_file = fopen("glitchGhost.ch8", "rb");
-    //FILE *program_file = fopen("TETRIS", "rb");
-    FILE *program_file = fopen("6-keypad.ch8", "rb");
+    //FILE *program_file = fopen("3-corax+(1).ch8", "rb");
+    //FILE *program_file = fopen("6-keypad.ch8", "rb");
+    FILE *program_file = fopen("4-flags.ch8", "rb");
 
     if (program_file) {
         fseek(program_file, 0, SEEK_END);
@@ -587,7 +611,7 @@ int main() {
         cout << "ERROR: opeing file for reading " << endl;
     }
 
-    // memcpy(chip8_RAM + 512, program, sizeof(program));
+    //memcpy(RAM + 512, program3, sizeof(program3));
     PC = 0x200; // start at 512
     double next_tick = 0.f;
 
@@ -645,6 +669,17 @@ int main() {
                     ST -= 1;
                 }
             }
+
+            /*if (IsKeyPressed(KEY_SPACE)) {
+                 run_cycle();
+                PC += 2;
+                if (DT > 0) {
+                    DT -= 1;
+                }
+                if (ST > 0) {
+                    ST -= 1;
+                }
+            }*/
 
             render_screen();
 
