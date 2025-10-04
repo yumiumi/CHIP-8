@@ -86,13 +86,16 @@ uint8_t program2[] = {
 };
 
 uint8_t program3[] = {
-    0x61, 0x20, // vx = nn, v1 = 20
-    0xF1, 0x1E, // i += Vx, i = 20
-    0xD5, 0x28, // Dxyn, D x=1 y=2, n = 8
-    0x62, 0x12, // vx = nn, v1 = 20
-    0xF2, 0x1E, // i += Vx, i = 12
-    0xD3, 0xF8,
-    0xD5, 0xA8,
+    0x61, 0x01, // vx = nn, v1 = 20
+    0x62, 0x02, // vx = nn, v1 = 20
+    0x65, 0x05, // vx = nn, v1 = 20
+    0x68, 0xFE, // vx = nn, v1 = 20
+
+    0xF5, 0x1E, 
+
+    //0xD8, 0x58, // Dxyn, D x=1 y=2, n = 8
+    0xD2, 0x8C, // Dxyn, D x=1 y=2, n = 8
+
 };
 
 uint8_t keypad[16];
@@ -250,6 +253,9 @@ void run_cycle() {
     uint8_t xpos;
     uint8_t ypos;
 
+    bool scr_end_w = false;
+    bool scr_end_h = false;
+
     int key;
 
     // 4-bit value, the lowest 4 bit (Dxyn)
@@ -297,8 +303,7 @@ void run_cycle() {
     case (0x02): // CALL
         stack[SP] = PC;
         SP++;
-        PC = nnn;
-        PC -= 2;
+        PC = nnn - 2; // later i add 2 to PC
         break;
 
     case (0x03):
@@ -319,11 +324,11 @@ void run_cycle() {
         }
         break;
 
-    case (0x06): // good
+    case (0x06):
         V[x] = kk;
         break;
 
-    case (0x07): // good
+    case (0x07):
         V[x] += kk;
         break;
 
@@ -372,7 +377,7 @@ void run_cycle() {
                 break;
 
             case (0x07):
-                if (V[y] > V[x]) {
+                if (V[y] >= V[x]) {
                     V[0x0F] = 1;
                 }
                 else {
@@ -412,24 +417,38 @@ void run_cycle() {
         V[x] = rand_val & kk;
         break;
 
-    case (0x0D): // good
+    case (0x0D):
         V[0x0F] = 0;
         was_changed = false;
-            xpos = V[x] % scr_w;
-            ypos = V[y] % scr_h;
         for (int h = 0; h < n; h++) {
             sprite_row = RAM[I + h];
             for (int w = 0; w < 8; w++) {
                 sprite_pixel = sprite_row & (0x80 >> w);
+                ypos = (V[y] + h) % scr_h;
+                xpos = (V[x] + w) % scr_w;
+                if (xpos == (scr_w - 1)) {
+                    scr_end_w = true;
+                }
+                if (ypos == (scr_h - 1)) {
+                    scr_end_h = true;
+                }
                 if (sprite_pixel != 0) {
-                    if (screen[ypos + h][xpos + w] == 1) {
-                        screen[ypos + h][xpos + w] = 0;
+                    if (screen[ypos][xpos] == 1) {
+                        screen[ypos][xpos] = 0;
                         was_changed = true;
                     }
                     else {
-                        screen[ypos + h][xpos + w] = 1;
+                        screen[ypos][xpos] = 1;
                     }
                 }
+                if (scr_end_w) {
+                    scr_end_w = false;
+                    break;
+                }
+            }
+            if (scr_end_h) {
+                scr_end_h = false;
+                break;
             }
         }
         if (was_changed) {
@@ -596,8 +615,8 @@ int main() {
     //open the binary file for reading
     //FILE *program_file = fopen("glitchGhost.ch8", "rb");
     //FILE *program_file = fopen("3-corax+(1).ch8", "rb");
-    //FILE *program_file = fopen("6-keypad.ch8", "rb");
-    FILE *program_file = fopen("4-flags.ch8", "rb");
+    FILE *program_file = fopen("5-quirks(1).ch8", "rb");
+    //FILE *program_file = fopen("4-flags.ch8", "rb");
 
     if (program_file) {
         fseek(program_file, 0, SEEK_END);
@@ -656,9 +675,9 @@ int main() {
             rlImGuiEnd();
 
             if (GetTime() >= next_tick) {
-                next_tick = GetTime() + (0.1f / 60.0f);
+                next_tick = GetTime() + (1.f / 60.0f);
                 
-                for (int i = 0; i < 1; i++) {
+                for (int i = 0; i < 9; i++) {
                     run_cycle();
                     PC += 2;
                 }
