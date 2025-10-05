@@ -89,7 +89,7 @@ uint8_t program3[] = {
     0x61, 0x01, // vx = nn, v1 = 20
     0x62, 0x02, // vx = nn, v1 = 20
     0x65, 0x05, // vx = nn, v1 = 20
-    0x68, 0xFE, // vx = nn, v1 = 20
+    0x68, 0x2c, // vx = nn, v1 = 20
 
     0xF5, 0x1E, 
 
@@ -258,6 +258,8 @@ void run_cycle() {
 
     int key;
 
+    uint16_t sum;
+
     // 4-bit value, the lowest 4 bit (Dxyn)
     uint8_t n = RAM[PC + 1] & 0x0F;
 
@@ -350,19 +352,19 @@ void run_cycle() {
                 V[x] = V[x] ^ V[y];
                 break;
 
-            case (0x04):
-                V[x] = (V[x] + V[y]);
-                if (V[x] > 0xFF) {
+            case (0x04): // sum here is uint16_t
+                sum = V[x] + V[y];
+                if (sum > 0xFF) {
                     V[0x0F] = 1;
                 }
                 else {
                     V[0x0F] = 0;
                 }
-                V[x] &= 0xFF;
+                V[x] = sum & 0xFF;
                 break;
 
             case (0x05):
-                if (V[x] > V[y]) {
+                if (V[x] >= V[y]) {
                     V[0x0F] = 1;
                 }
                 else {
@@ -386,7 +388,7 @@ void run_cycle() {
                 V[x] = V[y] - V[x];
                 break;
 
-            case (0x0E): // good 
+            case (0x0E):
                 if ((V[x] & 0x80) == 0x80) {
                     V[0x0F] = 1;
                 }
@@ -404,7 +406,7 @@ void run_cycle() {
         }
         break;
 
-    case (0x0A): // good
+    case (0x0A):
         I = nnn;
         break;
 
@@ -569,12 +571,14 @@ void run_cycle() {
                 for (int i = 0; i <= x; i++) {
                     RAM[I + i] = V[i];
                 }
+                I += x + 1;
                 break;
 
             case (0x65):
                 for (int i = 0; i <= x; i++) {
                     V[i] = RAM[I + i];
                 }
+                I += x + 1;
                 break;
         }
         break;
@@ -615,10 +619,11 @@ int main() {
     //open the binary file for reading
     //FILE *program_file = fopen("glitchGhost.ch8", "rb");
     //FILE *program_file = fopen("3-corax+(1).ch8", "rb");
-    FILE *program_file = fopen("5-quirks(1).ch8", "rb");
+    //FILE *program_file = fopen("5-quirks(1).ch8", "rb");
     //FILE *program_file = fopen("4-flags.ch8", "rb");
 
-    if (program_file) {
+
+    /*if (program_file) {
         fseek(program_file, 0, SEEK_END);
         long program_size = ftell(program_file);
         fseek(program_file, 0, SEEK_SET);
@@ -628,9 +633,9 @@ int main() {
     }
     else {
         cout << "ERROR: opeing file for reading " << endl;
-    }
+    }*/
 
-    //memcpy(RAM + 512, program3, sizeof(program3));
+    memcpy(RAM + 512, program3, sizeof(program3));
     PC = 0x200; // start at 512
     double next_tick = 0.f;
 
@@ -674,7 +679,7 @@ int main() {
             ImGui::End();
             rlImGuiEnd();
 
-            if (GetTime() >= next_tick) {
+            /*if (GetTime() >= next_tick) {
                 next_tick = GetTime() + (1.f / 60.0f);
                 
                 for (int i = 0; i < 9; i++) {
@@ -687,9 +692,9 @@ int main() {
                 if (ST > 0) {
                     ST -= 1;
                 }
-            }
+            }*/
 
-            /*if (IsKeyPressed(KEY_SPACE)) {
+            if (IsKeyPressed(KEY_SPACE)) {
                  run_cycle();
                 PC += 2;
                 if (DT > 0) {
@@ -698,7 +703,7 @@ int main() {
                 if (ST > 0) {
                     ST -= 1;
                 }
-            }*/
+            }
 
             render_screen();
 
