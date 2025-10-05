@@ -43,8 +43,6 @@ int const scr_w = 64;
 int cell_size = 8;
 bool screen[scr_h][scr_w];
 
-const float frames_per_sec = 60;
-
 uint8_t sprite_table[16][5] = {
     {	0xF0, 0x90, 0x90, 0x90, 0xF0, }, // 0
     {	0x20, 0x60, 0x20, 0x20, 0x70, }, // 1
@@ -64,41 +62,14 @@ uint8_t sprite_table[16][5] = {
     {   0xF0, 0x80, 0xF0, 0x80, 0x80, }, // F
 };
 
-uint8_t program2[] = {
-    // start is address 0x200 (512)
-    0x60, 0x10, // put value 0x10 into V0                   (200) 1
-    0x61, 0x16, // put value 0x16 into V1                   (202) 2
-
-    0x22, 0x0A, // CALL, JUMP to 20A                        (204) 3
-    0x70, 0x05, // V0 = V0 + 05 (0 + 5 = 5)  V0 = 27        (206) 12
-    0x12, 0x12, // jump to 212                              (208) 13
-    0x80, 0x13, // /XOR, V0 XOR V1; V0 = 6 (6)              (20A) 4
-    0x22, 0x16, // CALL, JUMP to 216                        (20C) 5
-    0x81, 0x06, // ret here, if lsb V1 = 1, then V1>>1 (0)  (20E) 10
-    0x00, 0xEE, // RET                                      (210) 11
-
-    0x00, 0xE0, // CLS                                      (212) 14
-    0x12, 0x1E, // JUMP to 21E                              (214) 15
-    0x80, 0x14, // ADD (v0 + v1) - jump here VF=0  V0=22    (216) 6
-    0x63, 0x15, // put value 0x15 into V3                   (218) 7
-    0x81, 0x35, // V1 - V3 (V1 = 1)	  V1 = 1        VF = 1	(21A) 8
-    0x00, 0xEE, // RET                                      (21C) 9
+uint8_t my_program[] = {
+    0x61, 0x01, // V[1] = 1
+    0x62, 0x02, // V[2] = 2
+    0x65, 0x05, // V[5] = 5
+    0x68, 0x2C, // V[8] = 2C
+    0xF5, 0x1E, // I += V[5] 
+    0xD2, 0x8C, // Dxyn, x = 2, y = 8, n = C
 };
-
-uint8_t program3[] = {
-    0x61, 0x01, // vx = nn, v1 = 20
-    0x62, 0x02, // vx = nn, v1 = 20
-    0x65, 0x05, // vx = nn, v1 = 20
-    0x68, 0x2c, // vx = nn, v1 = 20
-
-    0xF5, 0x1E, 
-
-    //0xD8, 0x58, // Dxyn, D x=1 y=2, n = 8
-    0xD2, 0x8C, // Dxyn, D x=1 y=2, n = 8
-
-};
-
-uint8_t keypad[16];
 
 int ch8_to_rb_key(uint8_t ch8_key) {
     switch (ch8_key) {
@@ -210,14 +181,7 @@ uint8_t rb_to_ch8_key(int key) {
     }
 }
 
-void load_to_memory() {
-    for (int i = 0; i < sizeof(program2); i++) {
-        RAM[512 + i] = program2[i];
-    }
-    // memcpy(chip8_RAM + 512, program, sizeof(program));
-}
-
-void load_sptites() {
+void load_sprites() {
     for (int y = 0; y < 16; y++) {
         for (int x = 0; x < 5; x++) {
             if ((y * 5 + x) < 0x1FF) { // 0x1FF = 511
@@ -247,7 +211,6 @@ void disp_clear() {
 
 // fetch, decode and execute a single instruction
 void run_cycle() {
-
     bool was_changed = false;
 
     uint8_t xpos;
@@ -281,7 +244,7 @@ void run_cycle() {
     uint8_t rand_val;
 
     uint8_t sprite_row;
-    uint8_t sprite_pixel;
+    bool sprite_pixel;
 
     switch (op_category) {
     case (0x00):
@@ -421,40 +384,27 @@ void run_cycle() {
 
     case (0x0D):
         V[0x0F] = 0;
-        was_changed = false;
         for (int h = 0; h < n; h++) {
             sprite_row = RAM[I + h];
+            ypos = (V[y] + h) % scr_h;
             for (int w = 0; w < 8; w++) {
-                sprite_pixel = sprite_row & (0x80 >> w);
-                ypos = (V[y] + h) % scr_h;
+                /*0b11011011
+                0b01000000
+                0b01000000 w=1, x=6 (40)
+                (8-1) - w = x*/
+                sprite_pixel = (sprite_row & (0x80 >> w)) >> ((8 - 1) - w); 
                 xpos = (V[x] + w) % scr_w;
-                if (xpos == (scr_w - 1)) {
-                    scr_end_w = true;
+                if (sprite_pixel && screen[ypos][xpos]) {
+                    V[0x0F] = 1;
                 }
-                if (ypos == (scr_h - 1)) {
-                    scr_end_h = true;
-                }
-                if (sprite_pixel != 0) {
-                    if (screen[ypos][xpos] == 1) {
-                        screen[ypos][xpos] = 0;
-                        was_changed = true;
-                    }
-                    else {
-                        screen[ypos][xpos] = 1;
-                    }
-                }
-                if (scr_end_w) {
-                    scr_end_w = false;
+                screen[ypos][xpos] ^= sprite_pixel;
+                if (xpos == scr_w - 1) {
                     break;
                 }
             }
-            if (scr_end_h) {
-                scr_end_h = false;
+            if (ypos == scr_h - 1) {
                 break;
             }
-        }
-        if (was_changed) {
-            V[0x0F] = 1;
         }
         break;
 
@@ -614,28 +564,27 @@ void render_screen() {
 int main() {
     InitWindow(1920, 1080, "CHIP-8");
     init_disp();
-    load_sptites();
+    load_sprites();
     
+#if 1
     //open the binary file for reading
-    //FILE *program_file = fopen("glitchGhost.ch8", "rb");
+    FILE *program_file = fopen("glitchGhost.ch8", "rb");
     //FILE *program_file = fopen("3-corax+(1).ch8", "rb");
     //FILE *program_file = fopen("5-quirks(1).ch8", "rb");
     //FILE *program_file = fopen("4-flags.ch8", "rb");
 
+    assert(program_file);
 
-    /*if (program_file) {
-        fseek(program_file, 0, SEEK_END);
-        long program_size = ftell(program_file);
-        fseek(program_file, 0, SEEK_SET);
+    fseek(program_file, 0, SEEK_END);
+    long program_size = ftell(program_file);
+    fseek(program_file, 0, SEEK_SET);
 
-        fread(RAM + 512, program_size, 1, program_file);
-        fclose(program_file);
-    }
-    else {
-        cout << "ERROR: opeing file for reading " << endl;
-    }*/
+    fread(RAM + 512, program_size, 1, program_file);
+    fclose(program_file);
+#else
+    memcpy(RAM + 512, my_program, sizeof(my_program));
+#endif
 
-    memcpy(RAM + 512, program3, sizeof(program3));
     PC = 0x200; // start at 512
     double next_tick = 0.f;
 
@@ -678,11 +627,10 @@ int main() {
             }
             ImGui::End();
             rlImGuiEnd();
-
-            /*if (GetTime() >= next_tick) {
+#if 1
+            if (GetTime() >= next_tick) {
                 next_tick = GetTime() + (1.f / 60.0f);
-                
-                for (int i = 0; i < 9; i++) {
+                for (int i = 0; i < 27; i++) {
                     run_cycle();
                     PC += 2;
                 }
@@ -692,10 +640,10 @@ int main() {
                 if (ST > 0) {
                     ST -= 1;
                 }
-            }*/
-
+            }
+#else
             if (IsKeyPressed(KEY_SPACE)) {
-                 run_cycle();
+                run_cycle();
                 PC += 2;
                 if (DT > 0) {
                     DT -= 1;
@@ -704,9 +652,8 @@ int main() {
                     ST -= 1;
                 }
             }
-
+#endif
             render_screen();
-
         EndDrawing();
     }
     CloseWindow();
